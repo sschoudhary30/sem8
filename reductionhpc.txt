@@ -1,0 +1,152 @@
+%%bash
+
+cat > parallel.cpp << 'EOF'
+#include <iostream>
+#include <omp.h>
+#include <vector>
+#include <chrono>  // high‑precision timing
+
+using namespace std;
+using namespace std::chrono;
+
+// Parallel versions
+int sum_p(int n, const vector<int>& arr) {
+    int total = 0;
+    #pragma omp parallel for reduction(+:total)
+    for (int i = 0; i < n; i++) total += arr[i];
+    return total;
+}
+
+int average_p(int n, const vector<int>& arr) {
+    int total = 0;
+    #pragma omp parallel for reduction(+:total)
+    for (int i = 0; i < n; i++) total += arr[i];
+    return total / n;
+}
+
+int maximum_p(int n, const vector<int>& arr) {
+    int max_value = arr[0];
+    #pragma omp parallel for reduction(max:max_value)
+    for (int i = 1; i < n; i++) {
+        if (arr[i] > max_value) max_value = arr[i];
+    }
+    return max_value;
+}
+
+int minimum_p(int n, const vector<int>& arr) {
+    int min_value = arr[0];
+    #pragma omp parallel for reduction(min:min_value)
+    for (int i = 1; i < n; i++) {
+        if (arr[i] < min_value) min_value = arr[i];
+    }
+    return min_value;
+}
+
+// Sequential versions
+int sum(int n, const vector<int>& arr) {
+    int total = 0;
+    for (int i = 0; i < n; i++) total += arr[i];
+    return total;
+}
+
+int average(int n, const vector<int>& arr) {
+    int total = 0;
+    for (int i = 0; i < n; i++) total += arr[i];
+    return total / n;
+}
+
+int maximum(int n, const vector<int>& arr) {
+    int max_value = arr[0];
+    for (int i = 1; i < n; i++) {
+        if (arr[i] > max_value) max_value = arr[i];
+    }
+    return max_value;
+}
+
+int minimum(int n, const vector<int>& arr) {
+    int min_value = arr[0];
+    for (int i = 1; i < n; i++) {
+        if (arr[i] < min_value) min_value = arr[i];
+    }
+    return min_value;
+}
+
+int main() {
+    const int n = 10'000'000;
+    vector<int> arr;
+    arr.reserve(n);
+    omp_set_num_threads(5);
+
+    // fill
+    for (int i = 0; i < n; i++) {
+        arr.push_back(rand() % n);
+
+    }
+
+    // ---- SUM ----
+    auto start = high_resolution_clock::now();
+    int seq_sum = sum(n, arr);
+    auto end   = high_resolution_clock::now();
+    double seq_sum_time = duration<double, nano>(end - start).count();
+
+    start = high_resolution_clock::now();
+    int par_sum = sum_p(n, arr);
+    end   = high_resolution_clock::now();
+    double par_sum_time = duration<double, nano>(end - start).count();
+
+    cout << "SUM  → seq=" << seq_sum << " in " << seq_sum_time <<"\n\n";
+    cout     << " ns, par=" << par_sum << " in " << par_sum_time <<"\n\n";
+       cout  << " ns, speedup=" << seq_sum_time / par_sum_time << "×\n";
+
+    // ---- AVERAGE ----
+    start = high_resolution_clock::now();
+    int seq_avg = average(n, arr);
+    end   = high_resolution_clock::now();
+    double seq_avg_time = duration<double, nano>(end - start).count();
+
+    start = high_resolution_clock::now();
+    int par_avg = average_p(n, arr);
+    end   = high_resolution_clock::now();
+    double par_avg_time = duration<double, nano>(end - start).count();
+
+    cout << "AVG  → seq=" << seq_avg << " in " << seq_avg_time <<"\n\n";
+     cout    << " ns, par=" << par_avg << " in " << par_avg_time <<"\n\n";
+      cout   << " ns, speedup=" << seq_avg_time / par_avg_time << "×\n";
+
+    // ---- MAXIMUM ----
+    start = high_resolution_clock::now();
+    int seq_max = maximum(n, arr);
+    end   = high_resolution_clock::now();
+    double seq_max_time = duration<double, nano>(end - start).count();
+
+    start = high_resolution_clock::now();
+    int par_max = maximum_p(n, arr);
+    end   = high_resolution_clock::now();
+    double par_max_time = duration<double, nano>(end - start).count();
+
+    cout << "MAX  → seq=" << seq_max << " in " << seq_max_time <<"\n\n";
+    cout     << " ns, par=" << par_max << " in " << par_max_time <<"\n\n";
+     cout    << " ns, speedup=" << seq_max_time / par_max_time << "×\n";
+
+    // ---- MINIMUM ----
+    start = high_resolution_clock::now();
+    int seq_min = minimum(n, arr);
+    end   = high_resolution_clock::now();
+    double seq_min_time = duration<double, nano>(end - start).count();
+
+    start = high_resolution_clock::now();
+    int par_min = minimum_p(n, arr);
+    end   = high_resolution_clock::now();
+    double par_min_time = duration<double, nano>(end - start).count();
+
+    cout << "MIN  → seq=" << seq_min << " in " << seq_min_time <<"\n\n";
+   cout      << " ns, par=" << par_min << " in " << par_min_time <<"\n\n";
+     cout    << " ns, speedup=" << seq_min_time / par_min_time << "×\n";
+
+    return 0;
+}
+EOF
+
+!g++ parallel.cpp -std=c++17 -O3 -fopenmp -o parallel
+
+!./parallel
