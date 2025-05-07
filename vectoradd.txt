@@ -1,0 +1,243 @@
+!nvidia-smi
+%%writefile vector_addition.cu
+#include <cuda_runtime.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#define N 10000
+
+__global__ void vectorAdd(int *a, int *b, int *c, int n) {
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < n) c[idx] = a[idx] + b[idx];
+}
+
+int main() {
+    int h_a[N], h_b[N], h_c[N], h_c_gpu[N];
+    int *d_a, *d_b, *d_c;
+
+    // Initialize random numbers
+    srand(time(NULL));
+    
+    for (int i = 0; i < N; i++) {
+        h_a[i] = rand() % 100;
+        h_b[i] = rand() % 100;
+    }
+
+    // CPU addition
+    clock_t cpu_start = clock();
+    for (int i = 0; i < N; i++)
+        h_c[i] = h_a[i] + h_b[i];
+    clock_t cpu_end = clock();
+    double cpu_time = (double)(cpu_end - cpu_start) / CLOCKS_PER_SEC;
+
+    // GPU allocation
+    cudaMalloc((void **)&d_a, N * sizeof(int));
+    cudaMalloc((void **)&d_b, N * sizeof(int));
+    cudaMalloc((void **)&d_c, N * sizeof(int));
+
+    cudaMemcpy(d_a, h_a, N * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, h_b, N * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Kernel execution
+    int threads = 256;
+    int blocks = (N + threads - 1) / threads;
+
+    vectorAdd<<<blocks, threads>>>(d_a, d_b, d_c, N);
+
+    // Force synchronization and error check
+    cudaDeviceSynchronize();
+    cudaError_t error = cudaGetLastError();
+    if (error != cudaSuccess) {
+        printf("Kernel error: %s\n", cudaGetErrorString(error));
+        return -1;
+    }
+
+    cudaMemcpy(h_c_gpu, d_c, N * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // GPU time measurement
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+    vectorAdd<<<blocks, threads>>>(d_a, d_b, d_c, N);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float gpu_time = 0;
+    cudaEventElapsedTime(&gpu_time, start, stop);
+
+    // Display results
+    printf("CPU Vector Addition:\n");
+    for (int i = 0; i < N; i++)
+        printf("%d + %d = %d\n", h_a[i], h_b[i], h_c[i]);
+
+    printf("\nGPU Vector Addition:\n");
+    for (int i = 0; i < N; i++)
+        printf("%d + %d = %d\n", h_a[i], h_b[i], h_c_gpu[i]);
+
+    // Validate results
+    bool correct = true;
+    for (int i = 0; i < N; i++) {
+        if (h_c[i] != h_c_gpu[i]) {
+            correct = false;
+            break;
+        }
+    }
+
+    printf("\nSummary:\n");
+    printf("CPU Time: %f s\n", cpu_time);
+    printf("GPU Time: %f ms\n", gpu_time);
+    printf("Speedup: %.2f\n", (cpu_time * 1000) / gpu_time);
+    printf("Match: %s\n", correct ? "Yes" : "No");
+
+    // Cleanup
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_c);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    return 0;
+}
+
+!nvcc -arch=sm_70 vector_addition.cu -o vector_addition
+
+!./vector_addition
+
+
+%%writefile matrix_multiplication.cu
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <time.h>
+#include <cuda_runtime.h>
+
+#define N 512
+
+__global__ void matrixMultiplyKernel(float *a, float *b, float *c, int n) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < n && col < n) {
+        float sum = 0.0f;
+        for (int k = 0; k < n; k++) {
+            sum += a[row * n + k] * b[k * n + col];
+        }
+        c[row * n + col] = sum;
+    }
+}
+
+// Error checking macro
+#define cudaCheckError() { \
+    cudaError_t e = cudaGetLastError(); \
+    if (e != cudaSuccess) { \
+        printf("CUDA Error: %s\n", cudaGetErrorString(e)); \
+        return; \
+    } \
+}
+
+class MatrixMultiplier {
+private:
+    float *h_a, *h_b, *h_c_cpu, *h_c_gpu;
+    float *d_a, *d_b, *d_c;
+    size_t size;
+    float cpuTime, gpuTime;
+
+public:
+    MatrixMultiplier() {
+        size = N * N * sizeof(float);
+        h_a = (float *)malloc(size);
+        h_b = (float *)malloc(size);
+        h_c_cpu = (float *)malloc(size);
+        h_c_gpu = (float *)malloc(size);
+        cudaMalloc((void **)&d_a, size);
+        cudaMalloc((void **)&d_b, size);
+        cudaMalloc((void **)&d_c, size);
+    }
+
+    ~MatrixMultiplier() {
+        free(h_a); free(h_b); free(h_c_cpu); free(h_c_gpu);
+        cudaFree(d_a); cudaFree(d_b); cudaFree(d_c);
+    }
+
+    void initializeMatrices() {
+        srand(time(NULL));
+        for (int i = 0; i < N * N; i++) {
+            h_a[i] = rand() % 100;
+            h_b[i] = rand() % 100;
+        }
+    }
+
+    void cpuMatrixMultiplication() {
+        clock_t start = clock();
+        for (int row = 0; row < N; row++) {
+            for (int col = 0; col < N; col++) {
+                float sum = 0.0f;
+                for (int k = 0; k < N; k++) {
+                    sum += h_a[row * N + k] * h_b[k * N + col];
+                }
+                h_c_cpu[row * N + col] = sum;
+            }
+        }
+        clock_t end = clock();
+        cpuTime = (float)(end - start) / CLOCKS_PER_SEC;
+    }
+
+    void gpuMatrixMultiplication() {
+        cudaMemcpy(d_a, h_a, size, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_b, h_b, size, cudaMemcpyHostToDevice);
+
+        dim3 threads(16, 16);
+        dim3 blocks((N + threads.x - 1) / threads.x, (N + threads.y - 1) / threads.y);
+
+        cudaEvent_t start, stop;
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+
+        cudaEventRecord(start);
+
+        matrixMultiplyKernel<<<blocks, threads>>>(d_a, d_b, d_c, N);
+        cudaCheckError();  // <--- Catch kernel launch error
+
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+
+        cudaMemcpy(h_c_gpu, d_c, size, cudaMemcpyDeviceToHost);
+
+        cudaEventElapsedTime(&gpuTime, start, stop);
+        gpuTime /= 1000.0f; // convert to seconds
+
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+    }
+
+    bool verify() {
+        float tolerance = 1e-2;
+        for (int i = 0; i < N * N; i++) {
+            if (fabs(h_c_cpu[i] - h_c_gpu[i]) > tolerance) {
+                printf("Mismatch at index %d: CPU = %f, GPU = %f\n", i, h_c_cpu[i], h_c_gpu[i]);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void report() {
+        printf("CPU Time: %f seconds\n", cpuTime);
+        printf("GPU Time: %f seconds\n", gpuTime);
+        printf("Speedup: %.2fx\n", cpuTime / gpuTime);
+    }
+};
+
+int main() {
+    MatrixMultiplier mm;
+    mm.initializeMatrices();
+    mm.cpuMatrixMultiplication();
+    mm.gpuMatrixMultiplication();
+    bool matched = mm.verify();
+    mm.report();
+    printf("Verification: %s\n", matched ? "PASSED ✅" : "FAILED ❌");
+    return 0;
+}
+
+!nvcc -arch=sm_70 matrix_multiplication.cu -o matrix_multiplication
+!./matrix_multiplication
