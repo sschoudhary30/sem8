@@ -1,0 +1,175 @@
+%%bash
+# 1) Dump your exact code to disk (we just added <algorithm>)
+cat > graph.cpp << 'EOF'
+#include <iostream>
+#include <vector>
+#include <stack>
+#include <queue>
+#include <algorithm>      // <-- added so fill() compiles
+#include <omp.h>
+#include <chrono>
+using namespace std;
+using namespace std::chrono;
+
+class Graph{
+public:
+    int vertices;
+    vector<vector<int>> adj;
+    vector<bool> visited;
+
+    Graph(int V,int E):vertices(V),adj(V),visited(V,false){
+        generate(E);
+    }
+    void generate(int E){
+        for(int i=0;i<E;i++){
+            int u=rand()%vertices;
+            int v=rand()%vertices;
+            if(u!=v){
+                adj[u].push_back(v);
+                adj[v].push_back(u);
+            }
+        }
+    }
+    void change(){
+        fill(visited.begin(),visited.end(),false);
+    }
+    void bfs(int start){
+        queue<int> q;
+        q.push(start);
+        visited[start]=true;
+        while(!q.empty()){
+            int node=q.front();
+            //cout<<node<<"  ";
+            q.pop();
+            for(int neighbor:adj[node]){
+                if(!visited[neighbor]){
+                    q.push(neighbor);
+                    visited[neighbor]=true;
+                }
+            }
+        }
+    }
+    void dfsp(int start){
+        visited[start]=true;
+        #pragma omp parallel
+        {
+            stack<int> s;
+            s.push(start);
+            while(!s.empty()){
+                int node;
+                if(!s.empty()){
+                    node=s.top();
+                    s.pop();
+                } else {
+                    node=-1;
+                }
+                if(node == -1) continue;
+                for(int neighbor:adj[node]){
+                    if(!visited[neighbor]){
+                        #pragma omp critical
+                        {
+                            s.push(neighbor);
+                            visited[neighbor]=true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    void bfsp(int start){
+        queue<int> q;
+        q.push(start);
+        visited[start]=true;
+        #pragma omp parallel
+        {
+            queue<int> local;
+            while(true){
+                int node;
+                #pragma omp critical
+                {
+                    if(!q.empty()){
+                        node=q.front();
+                        q.pop();
+                    } else {
+                        node=-1;
+                    }
+                }
+                if(node==-1) break;
+                cout<<node<<"  ";
+                for(int neighbor:adj[node]){
+                    if(!visited[neighbor]){
+                        #pragma omp critical
+                        {
+                            local.push(neighbor);
+                        }
+                        visited[neighbor]=true;
+                    }
+                }
+                #pragma omp barrier
+                #pragma omp critical
+                {
+                    while(!local.empty()){
+                        q.push(local.front());
+                        local.pop();
+                    }
+                }
+            }
+        }
+    }
+    void dfs(int start){
+        stack<int> q;
+        q.push(start);
+        visited[start]=true;
+        while(!q.empty()){
+            int node=q.top();
+            q.pop();
+            for(int neighbor:adj[node]){
+                if(!visited[neighbor]){
+                    q.push(neighbor);
+                    visited[neighbor]=true;
+                }
+            }
+        }
+    }
+};
+
+int main(){
+    int v=100;
+    int e=2000;
+    Graph g(v,e);
+
+    double start=omp_get_wtime();
+    g.bfs(0);
+    double end=omp_get_wtime();
+    double time =(end-start);
+    cout<<"Time is : "<< time<<"\n";
+
+    g.change();
+    double start2=omp_get_wtime();
+    g.bfsp(0);
+    double end2=omp_get_wtime();
+    double time2 =(end2-start2);
+    cout<<"Time is : "<< time2<<"\n";
+    cout<<"Speed up : "<< time/time2<<"\n";
+
+    g.change();
+    double start3=omp_get_wtime();
+    g.dfs(0);
+    double end3=omp_get_wtime();
+    double time3 =(end3-start3);
+    cout<<"Time is : "<< time3<<"\n";
+
+    g.change();
+    double start4=omp_get_wtime();
+    g.dfsp(0);
+    double end4=omp_get_wtime();
+    double time4 =(end4-start4);
+    cout<<"Speed up DFS: "<< time3/time4<<"\n";
+
+    return 0;
+}
+EOF
+
+!g++ graph.cpp -std=c++11 -fopenmp -O2 -o graph
+
+!./graph
